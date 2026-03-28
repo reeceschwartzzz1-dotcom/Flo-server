@@ -222,13 +222,13 @@ app.post('/api/plaid/sandbox-connect', requireAuth, async (req, res) => {
 
 app.post('/api/stripe/subscribe', requireAuth, async (req, res) => {
   try {
-    const { data: profile } = await supabase.from('profiles').select('stripe_customer_id').eq('id', req.user.id).single();
+    const { data: profile } = await supabase.from('users').select('stripe_customer_id').eq('id', req.user.id).single();
 
     let customerId = profile?.stripe_customer_id;
     if (!customerId) {
       const customer = await stripe.customers.create({ email: req.user.email });
       customerId = customer.id;
-      await supabase.from('profiles').update({ stripe_customer_id: customerId }).eq('id', req.user.id);
+      await supabase.from('users').update({ stripe_customer_id: customerId }).eq('id', req.user.id);
     }
 
     const session = await stripe.checkout.sessions.create({
