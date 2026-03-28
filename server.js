@@ -222,26 +222,37 @@ app.post('/api/plaid/sandbox-connect', requireAuth, async (req, res) => {
 
 app.post('/api/stripe/subscribe', requireAuth, async (req, res) => {
   try {
-    const { data: user } = await supabase.from('users').select('stripe_customer_id').eq('id', req.user.id).single();
+    const { data: profile } = await supabase.from('profiles').select('stripe_customer_id').eq('id', req.user.id).single();
 
-    let customerId = user?.stripe_customer_id;
+    let customerId = profile?.stripe_customer_id;
     if (!customerId) {
       const customer = await stripe.customers.create({ email: req.user.email });
       customerId = customer.id;
-      await supabase.from('users').update({ stripe_customer_id: customerId }).eq('id', req.user.id);
+      await supabase.from('profiles').update({ stripe_customer_id: customerId }).eq('id', req.user.id);
     }
 
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: 499, // $4.99
-      currency: 'usd',
+    const session = await stripe.checkout.sessions.create({
       customer: customerId,
+      payment_method_types: ['card'],
+      line_items: [{ price_data: { currency: 'usd', product_data: { name: 'Flo Pro' }, recurring: { interval: 'month' }, unit_amount: 499 }, quantity: 1 }],
+      mode: 'subscription',
+      success_url: 'https://flo-server-production.up.railway.app/payment-success',
+      cancel_url: 'https://flo-server-production.up.railway.app/payment-cancel',
     });
 
-    res.json({ client_secret: paymentIntent.client_secret });
+    res.json({ checkout_url: session.url });
   } catch (e) {
     console.error('[Stripe] subscribe error:', e.message);
     res.status(500).json({ message: 'Could not start subscription' });
   }
+});
+
+app.get('/payment-success', (req, res) => {
+  res.send('<html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#111820;color:#fff"><h1>🎉 You\'re now on Flo Pro!</h1><p>Close this window and return to the app.</p></body></html>');
+});
+
+app.get('/payment-cancel', (req, res) => {
+  res.send('<html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#111820;color:#fff"><h1>Payment cancelled</h1><p>Close this window and return to the app.</p></body></html>');
 });
 
 app.post('/api/stripe/cancel', requireAuth, async (req, res) => {
