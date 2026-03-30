@@ -252,6 +252,59 @@ app.get('/oauth-return', (req, res) => {
   res.send('<html><head><meta name="viewport" content="width=device-width,initial-scale=1"/></head><body style="margin:0;background:#111820;"><script>window.location.href = window.location.href;</script></body></html>');
 });
 
+// Hosted Plaid Link page — opens in real Safari
+app.get('/plaid/connect', (req, res) => {
+  const { token, uid } = req.query;
+  res.send(`<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"/><style>body{margin:0;background:#111820;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px}p{color:#fff;font-size:16px;text-align:center;padding:0 24px}</style></head><body><p>Loading bank connection...</p><script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script><script>
+var handler = Plaid.create({
+  token: '${token}',
+  onSuccess: function(public_token, metadata) {
+    fetch('/plaid/web-success', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({public_token: public_token, uid: '${uid}'})
+    }).then(function(r){ return r.json(); }).then(function(){
+      document.body.innerHTML = '<p style="color:#4ade80;font-size:20px;font-weight:700">✓ Bank connected!</p><p style="color:#aaa">You can close this window and return to Flo.</p>';
+    }).catch(function(){ document.body.innerHTML = '<p style="color:#f87171">Something went wrong. Please try again.</p>'; });
+  },
+  onExit: function(){ window.close(); }
+});
+handler.open();
+</script></body></html>`);
+});
+
+app.post('/plaid/web-success', async (req, res) => {
+  const { public_token, uid } = req.body;
+  try {
+    const exchangeRes = await plaid.itemPublicTokenExchange({ public_token });
+    const accessToken = exchangeRes.data.access_token;
+    const itemId = exchangeRes.data.item_id;
+
+    const itemRes = await plaid.itemGet({ access_token: accessToken });
+    const institutionId = itemRes.data.item.institution_id;
+    let institutionName = 'My Bank';
+    if (institutionId) {
+      const instRes = await plaid.institutionsGetById({ institution_id: institutionId, country_codes: ['US'] });
+      institutionName = instRes.data.institution.name;
+    }
+
+    const { error } = await supabase.from('plaid_connections').insert({
+      user_id: uid,
+      institution_id: institutionId || 'unknown',
+      institution_name: institutionName,
+      plaid_item_id: itemId,
+      plaid_access_token: accessToken,
+    });
+    if (error) throw error;
+
+    await syncAccounts(uid, accessToken, itemId);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('[Plaid web] error:', e.response?.data || e.message);
+    res.status(500).json({ message: 'Could not connect bank' });
+  }
+});
+
 app.get('/payment-success', (req, res) => {
   res.send('<html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#111820;color:#fff"><h1>🎉 You\'re now on Flo Pro!</h1><p>Close this window and return to the app.</p></body></html>');
 });
