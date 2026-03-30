@@ -60,10 +60,11 @@ app.post('/api/plaid/link-token', requireAuth, async (req, res) => {
   try {
     const response = await plaid.linkTokenCreate({
       user: { client_user_id: req.user.id },
-      client_name: 'Flōw',
+      client_name: 'Flo',
       products: ['transactions'],
       country_codes: ['US'],
       language: 'en',
+      redirect_uri: 'https://flo-server-production.up.railway.app/oauth-return',
     });
     res.json({ link_token: response.data.link_token });
   } catch (e) {
@@ -245,6 +246,10 @@ app.post('/api/stripe/subscribe', requireAuth, async (req, res) => {
     console.error('[Stripe] subscribe error:', e.message);
     res.status(500).json({ message: 'Could not start subscription' });
   }
+});
+
+app.get('/oauth-return', (req, res) => {
+  res.send('<html><head><meta name="viewport" content="width=device-width,initial-scale=1"/></head><body style="margin:0;background:#111820;"><script>window.location.href = window.location.href;</script></body></html>');
 });
 
 app.get('/payment-success', (req, res) => {
