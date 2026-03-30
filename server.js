@@ -297,8 +297,16 @@ app.post('/plaid/web-success', async (req, res) => {
     }).select().single();
     if (error) throw error;
 
-    await syncAccounts(uid, accessToken, itemId);
-    await syncTransactions(uid, accessToken, connData.id);
+    try {
+      await syncAccounts(uid, accessToken, itemId);
+    } catch (syncErr) {
+      console.error('[Plaid web] syncAccounts error:', syncErr.response?.data || syncErr.message);
+    }
+    try {
+      await syncTransactions(uid, accessToken, connData.id);
+    } catch (syncErr) {
+      console.error('[Plaid web] syncTransactions error:', syncErr.response?.data || syncErr.message);
+    }
     res.json({ success: true });
   } catch (e) {
     console.error('[Plaid web] error:', e.response?.data || e.message);
@@ -326,12 +334,15 @@ app.post('/api/stripe/cancel', requireAuth, async (req, res) => {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function syncAccounts(userId, accessToken, itemId) {
-  const { data: conn } = await supabase.from('plaid_connections').select('id').eq('plaid_item_id', itemId).single();
-  if (!conn) return;
+  console.log('[syncAccounts] Starting for itemId:', itemId);
+  const { data: conn, error: connErr } = await supabase.from('plaid_connections').select('id').eq('plaid_item_id', itemId).single();
+  if (connErr) console.error('[syncAccounts] Connection lookup error:', connErr.message);
+  if (!conn) { console.log('[syncAccounts] No connection found, skipping'); return; }
 
   const res = await plaid.accountsGet({ access_token: accessToken });
+  console.log('[syncAccounts] Got', res.data.accounts.length, 'accounts from Plaid');
   for (const account of res.data.accounts) {
-    await supabase.from('accounts').upsert({
+    const { error: upsertErr } = await supabase.from('accounts').upsert({
       user_id: userId,
       plaid_connection_id: conn.id,
       plaid_account_id: account.account_id,
@@ -343,22 +354,27 @@ async function syncAccounts(userId, accessToken, itemId) {
       balance_available: account.balances.available,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'plaid_account_id' });
+    if (upsertErr) console.error('[syncAccounts] Upsert error:', upsertErr.message);
   }
+  console.log('[syncAccounts] Done');
 }
 
 async function syncTransactions(userId, accessToken, connectionId) {
+  console.log('[syncTransactions] Starting for connectionId:', connectionId);
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - 30);
   const start = startDate.toISOString().slice(0, 10);
   const end = new Date().toISOString().slice(0, 10);
 
   const res = await plaid.transactionsGet({ access_token: accessToken, start_date: start, end_date: end });
+  console.log('[syncTransactions] Got', res.data.transactions.length, 'transactions from Plaid');
 
+  let saved = 0;
   for (const tx of res.data.transactions) {
     const { data: account } = await supabase.from('accounts').select('id').eq('plaid_account_id', tx.account_id).single();
-    if (!account) continue;
+    if (!account) { console.log('[syncTransactions] No account found for', tx.account_id); continue; }
 
-    await supabase.from('transactions').upsert({
+    const { error: txErr } = await supabase.from('transactions').upsert({
       user_id: userId,
       account_id: account.id,
       plaid_transaction_id: tx.transaction_id,
@@ -371,9 +387,14 @@ async function syncTransactions(userId, accessToken, connectionId) {
       pending: tx.pending,
       logo_url: tx.logo_url || null,
     }, { onConflict: 'plaid_transaction_id' });
+    if (txErr) console.error('[syncTransactions] Upsert error:', txErr.message);
+    else saved++;
   }
 
-  await supabase.from('plaid_connections').update({ last_synced_at: new Date().toISOString() }).eq('id', connectionId);
+  console.log('[syncTransactions] Saved', saved, 'transactions');
+  const { error: updateErr } = await supabase.from('plaid_connections').update({ last_synced_at: new Date().toISOString() }).eq('id', connectionId);
+  if (updateErr) console.error('[syncTransactions] last_synced_at update error:', updateErr.message);
+  else console.log('[syncTransactions] Updated last_synced_at');
 }
 
 // ─── Start ────────────────────────────────────────────────────────────────────
