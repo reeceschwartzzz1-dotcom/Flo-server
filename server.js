@@ -288,16 +288,17 @@ app.post('/plaid/web-success', async (req, res) => {
       institutionName = instRes.data.institution.name;
     }
 
-    const { error } = await supabase.from('plaid_connections').insert({
+    const { data: connData, error } = await supabase.from('plaid_connections').insert({
       user_id: uid,
       institution_id: institutionId || 'unknown',
       institution_name: institutionName,
       plaid_item_id: itemId,
       plaid_access_token: accessToken,
-    });
+    }).select().single();
     if (error) throw error;
 
     await syncAccounts(uid, accessToken, itemId);
+    await syncTransactions(uid, accessToken, connData.id);
     res.json({ success: true });
   } catch (e) {
     console.error('[Plaid web] error:', e.response?.data || e.message);
