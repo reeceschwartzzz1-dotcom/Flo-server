@@ -142,35 +142,48 @@ app.get('/api/budget/safe-to-spend', requireAuth, async (req, res) => {
     const startOfMonth = `${month}-01`;
     const now = new Date().toISOString().slice(0, 10);
 
-    // Get all transactions this month
+    // Get available balance from depository accounts (checking/savings)
+    const { data: accountsData } = await supabase
+      .from('accounts')
+      .select('balance_available, balance_current, type, subtype')
+      .eq('user_id', req.user.id)
+      .eq('type', 'depository');
+
+    const totalBalance = (accountsData || []).reduce((s, a) => {
+      return s + (a.balance_available ?? a.balance_current ?? 0);
+    }, 0);
+
+    // Get transactions this month for spending breakdown
     const { data: transactions } = await supabase
       .from('transactions')
-      .select('amount, category, date')
+      .select('amount, date')
       .eq('user_id', req.user.id)
       .gte('date', startOfMonth)
       .lte('date', now);
 
     const txList = transactions || [];
 
-    // Calculate totals
-    const income = txList.filter(t => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0);
+    // In Plaid: positive = money out (expense), negative = money in (income/deposit)
     const expenses = txList.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0);
-    const bills = txList.filter(t => ['Bills', 'Rent', 'Utilities'].includes(t.category)).reduce((s, t) => s + t.amount, 0);
+    const income = txList.filter(t => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0);
 
+    // Today's spending
+    const spentToday = txList
+      .filter(t => t.date === now && t.amount > 0)
+      .reduce((s, t) => s + t.amount, 0);
+
+    // Days left in month for daily budget
     const daysInMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
     const dayOfMonth = new Date().getDate();
-    const daysLeft = daysInMonth - dayOfMonth;
-
-    const safeToSpend = income - bills;
-    const remaining = safeToSpend - expenses;
-    const dailyBudget = daysLeft > 0 ? remaining / daysLeft : 0;
+    const daysLeft = Math.max(1, daysInMonth - dayOfMonth);
+    const dailyBudget = totalBalance / daysLeft;
 
     res.json({
-      safe_to_spend: safeToSpend,
-      spent_today: 0,
+      safe_to_spend: totalBalance,
+      spent_today: spentToday,
       spent_this_week: expenses,
       income_this_month: income,
-      bills_this_month: bills,
+      bills_this_month: 0,
       savings_this_month: 0,
       daily_budget: dailyBudget,
     });
