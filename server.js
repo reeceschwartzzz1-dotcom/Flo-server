@@ -366,7 +366,18 @@ async function syncTransactions(userId, accessToken, connectionId) {
   const start = startDate.toISOString().slice(0, 10);
   const end = new Date().toISOString().slice(0, 10);
 
-  const res = await plaid.transactionsGet({ access_token: accessToken, start_date: start, end_date: end });
+  let res;
+  try {
+    res = await plaid.transactionsGet({ access_token: accessToken, start_date: start, end_date: end });
+  } catch (plaidErr) {
+    const code = plaidErr.response?.data?.error_code;
+    if (code === 'PRODUCT_NOT_READY') {
+      console.log('[syncTransactions] Transactions not ready yet — marking synced, will retry on next pull-to-refresh');
+      await supabase.from('plaid_connections').update({ last_synced_at: new Date().toISOString() }).eq('id', connectionId);
+      return;
+    }
+    throw plaidErr;
+  }
   console.log('[syncTransactions] Got', res.data.transactions.length, 'transactions from Plaid');
 
   let saved = 0;
