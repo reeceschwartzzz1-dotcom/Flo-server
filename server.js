@@ -62,7 +62,7 @@ app.post('/api/plaid/link-token', requireAuth, async (req, res) => {
       user: { client_user_id: req.user.id },
       client_name: 'Flōw',
       products: ['transactions'],
-      country_codes: ['US', 'GB'],
+      country_codes: ['US'],
       language: 'en',
     });
     res.json({ link_token: response.data.link_token });
@@ -87,7 +87,7 @@ app.post('/api/plaid/exchange', requireAuth, async (req, res) => {
     if (institutionId) {
       const instRes = await plaid.institutionsGetById({
         institution_id: institutionId,
-        country_codes: ['US', 'GB'],
+        country_codes: ['US'],
       });
       institutionName = instRes.data.institution.name;
     }
