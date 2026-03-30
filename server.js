@@ -314,6 +314,41 @@ app.post('/plaid/web-success', async (req, res) => {
   }
 });
 
+// Remove a bank connection
+app.delete('/api/plaid/connection/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    // Verify the connection belongs to this user
+    const { data: conn } = await supabase
+      .from('plaid_connections')
+      .select('id, plaid_access_token')
+      .eq('id', id)
+      .eq('user_id', req.user.id)
+      .single();
+    if (!conn) return res.status(404).json({ message: 'Connection not found' });
+
+    // Remove the item from Plaid
+    try {
+      await plaid.itemRemove({ access_token: conn.plaid_access_token });
+    } catch (e) {
+      console.log('[Plaid] itemRemove error (non-fatal):', e.message);
+    }
+
+    // Delete accounts and transactions (cascade should handle this, but just in case)
+    await supabase.from('transactions').delete().in(
+      'account_id',
+      (await supabase.from('accounts').select('id').eq('plaid_connection_id', id)).data?.map(a => a.id) || []
+    );
+    await supabase.from('accounts').delete().eq('plaid_connection_id', id);
+    await supabase.from('plaid_connections').delete().eq('id', id);
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('[Plaid] disconnect error:', e.message);
+    res.status(500).json({ message: 'Could not disconnect bank' });
+  }
+});
+
 app.get('/payment-success', (req, res) => {
   res.send('<html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#111820;color:#fff"><h1>🎉 You\'re now on Flo Pro!</h1><p>Close this window and return to the app.</p></body></html>');
 });
